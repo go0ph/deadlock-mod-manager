@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::{AppHandle, Emitter};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -83,11 +84,14 @@ struct ActiveDownload {
   speed: f64,
 }
 
+pub const DEFAULT_MAX_CONCURRENT: usize = 3;
+
 pub struct DownloadManager {
   queue: Arc<Mutex<VecDeque<DownloadTask>>>,
   active_downloads: Arc<Mutex<HashMap<String, ActiveDownload>>>,
   app_handle: AppHandle,
-  processing: Arc<Mutex<bool>>,
+  semaphore: Arc<Semaphore>,
+  max_concurrent: Arc<AtomicUsize>,
 }
 
 impl DownloadManager {
@@ -96,8 +100,32 @@ impl DownloadManager {
       queue: Arc::new(Mutex::new(VecDeque::new())),
       active_downloads: Arc::new(Mutex::new(HashMap::new())),
       app_handle,
-      processing: Arc::new(Mutex::new(false)),
+      semaphore: Arc::new(Semaphore::new(DEFAULT_MAX_CONCURRENT)),
+      max_concurrent: Arc::new(AtomicUsize::new(DEFAULT_MAX_CONCURRENT)),
     }
+  }
+
+  /// Update the maximum number of concurrent downloads. Takes effect immediately for new
+  /// downloads; in-flight downloads are not interrupted.
+  pub fn set_max_concurrent(&self, new_max: usize) {
+    let new_max = new_max.clamp(1, 10);
+    let old_max = self.max_concurrent.swap(new_max, Ordering::Relaxed);
+    log::info!("Max concurrent downloads changed from {old_max} to {new_max}");
+
+    if new_max > old_max {
+      // Add extra permits so that queued tasks can start immediately.
+      self.semaphore.add_permits(new_max - old_max);
+      // Kick off dispatch in case tasks are already waiting in the queue.
+      Self::dispatch_from(
+        Arc::clone(&self.queue),
+        Arc::clone(&self.active_downloads),
+        self.app_handle.clone(),
+        Arc::clone(&self.semaphore),
+        Arc::clone(&self.max_concurrent),
+      );
+    }
+    // If new_max < old_max: excess permits are "consumed" without being re-added as
+    // currently-running downloads finish, naturally reducing concurrency.
   }
 
   pub async fn queue_download(&self, task: DownloadTask) -> Result<(), Error> {
@@ -108,45 +136,75 @@ impl DownloadManager {
       queue.push_back(task);
     }
 
-    self.process_queue().await;
+    Self::dispatch_from(
+      Arc::clone(&self.queue),
+      Arc::clone(&self.active_downloads),
+      self.app_handle.clone(),
+      Arc::clone(&self.semaphore),
+      Arc::clone(&self.max_concurrent),
+    );
+
     Ok(())
   }
 
-  async fn process_queue(&self) {
-    let mut processing = self.processing.lock().await;
-    if *processing {
-      log::debug!("Queue is already being processed");
-      return;
-    }
-    *processing = true;
-    drop(processing);
-
-    let queue_clone = Arc::clone(&self.queue);
-    let active_clone = Arc::clone(&self.active_downloads);
-    let app_handle = self.app_handle.clone();
-    let processing_clone = Arc::clone(&self.processing);
-
+  /// Attempt to start as many queued downloads as the semaphore allows.
+  /// This is a free function so it can be called from spawned tasks without
+  /// needing a reference to `&self`.
+  fn dispatch_from(
+    queue: Arc<Mutex<VecDeque<DownloadTask>>>,
+    active_downloads: Arc<Mutex<HashMap<String, ActiveDownload>>>,
+    app_handle: AppHandle,
+    semaphore: Arc<Semaphore>,
+    max_concurrent: Arc<AtomicUsize>,
+  ) {
     tokio::spawn(async move {
       loop {
-        let task = {
-          let mut queue = queue_clone.lock().await;
-          queue.pop_front()
+        // Try to acquire a permit without blocking (non-blocking check).
+        let permit = match semaphore.try_acquire() {
+          Ok(p) => p,
+          Err(_) => break, // All slots are occupied.
         };
+
+        // Pop the next task from the queue.
+        let task = { queue.lock().await.pop_front() };
 
         match task {
           Some(task) => {
-            if let Err(e) =
-              Self::download_mod(task, Arc::clone(&active_clone), app_handle.clone()).await
-            {
-              log::error!("Failed to download mod: {e}");
-            }
+            // Forget the borrowed permit; we will manually return it via
+            // `add_permits(1)` once the download completes.
+            permit.forget();
+
+            let active2 = Arc::clone(&active_downloads);
+            let app2 = app_handle.clone();
+            let queue2 = Arc::clone(&queue);
+            let sem2 = Arc::clone(&semaphore);
+            let max2 = Arc::clone(&max_concurrent);
+
+            tokio::spawn(async move {
+              if let Err(e) = Self::download_mod(task, Arc::clone(&active2), app2.clone()).await {
+                log::error!("Download failed: {e}");
+              }
+
+              // Return the permit only if we are still below the configured max.
+              // This naturally reduces active slots when the user lowers the limit.
+              let current_max = max2.load(Ordering::Relaxed);
+              let available = sem2.available_permits();
+              if available < current_max {
+                sem2.add_permits(1);
+              }
+
+              // Attempt to dispatch the next queued task.
+              Self::dispatch_from(queue2, active2, app2, sem2, max2);
+            });
+            // Continue the outer loop – we may be able to start more downloads.
           }
-          None => break,
+          None => {
+            // Queue is empty; return the permit we just acquired.
+            drop(permit);
+            break;
+          }
         }
       }
-
-      let mut processing = processing_clone.lock().await;
-      *processing = false;
     });
   }
 

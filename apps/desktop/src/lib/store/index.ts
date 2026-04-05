@@ -46,7 +46,7 @@ export const usePersistedStore = create<State>()(
     }),
     {
       name: "local-config",
-      version: 14,
+      version: 15,
       storage: createJSONStorage(() => storage),
       skipHydration: true,
       migrate: (persistedState: unknown, version: number) => {
@@ -396,6 +396,20 @@ export const usePersistedStore = create<State>()(
             );
           state.fileserverPreference = "default";
           state.fileserverLatencyMs = {};
+        }
+
+        // Migration from version 14 to 15: Add maxConcurrentDownloads
+        if (version <= 14) {
+          logger
+            .withMetadata({
+              migrationFrom: 14,
+              migrationTo: 15,
+              action: "add-max-concurrent-downloads",
+            })
+            .info(
+              "Migrating from version 14 to 15: Adding maxConcurrentDownloads",
+            );
+          state.maxConcurrentDownloads = 3;
         }
 
         return state;

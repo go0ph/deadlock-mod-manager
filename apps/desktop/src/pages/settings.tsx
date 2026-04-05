@@ -58,6 +58,7 @@ import { IngestToolToggle } from "@/components/settings/ingest-tool-toggle";
 import { LanguageSettings } from "@/components/settings/language-settings";
 import { LinuxGpuToggle } from "@/components/settings/linux-gpu-toggle";
 import { LoggingSettings } from "@/components/settings/logging-settings";
+import { MaxConcurrentDownloads } from "@/components/settings/max-concurrent-downloads";
 import { PluginList } from "@/components/settings/plugin-list";
 import PrivacySettings from "@/components/settings/privacy-settings";
 import Section, { SectionSkeleton } from "@/components/settings/section";
@@ -551,6 +552,7 @@ const CustomSettings = ({ value }: { value?: string }) => {
               description={t("settings.networkDescription")}
               title={t("settings.network")}>
               <FileserverSettings />
+              <MaxConcurrentDownloads />
             </Section>
           </TabsContent>
 
