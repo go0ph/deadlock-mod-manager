@@ -141,6 +141,7 @@ pub fn run() {
       commands::open_addons_backups_folder,
       commands::queue_download,
       commands::cancel_download,
+      commands::set_max_concurrent_downloads,
       commands::get_download_status,
       commands::get_all_downloads,
       commands::replace_mod_vpks,

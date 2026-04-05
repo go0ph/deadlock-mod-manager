@@ -895,6 +895,16 @@ pub async fn cancel_download(app_handle: AppHandle, mod_id: String) -> Result<()
 }
 
 #[tauri::command]
+pub async fn set_max_concurrent_downloads(
+  app_handle: AppHandle,
+  max_concurrent: usize,
+) -> Result<(), Error> {
+  let manager = get_download_manager(app_handle).await;
+  manager.set_max_concurrent(max_concurrent);
+  Ok(())
+}
+
+#[tauri::command]
 pub async fn get_download_status(
   app_handle: AppHandle,
   mod_id: String,

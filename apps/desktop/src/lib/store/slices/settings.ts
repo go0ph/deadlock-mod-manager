@@ -28,6 +28,7 @@ export type SettingsState = {
   enabledPlugins: Record<string, boolean>; // pluginId -> isEnabled
   backupEnabled: boolean;
   maxBackupCount: number; // 0 means unlimited
+  maxConcurrentDownloads: number; // 1–10, default 3
 
   addSetting: (setting: LocalSetting) => void;
   removeSetting: (id: string) => void;
@@ -66,6 +67,9 @@ export type SettingsState = {
   setBackupEnabled: (enabled: boolean) => void;
   setMaxBackupCount: (count: number) => void;
 
+  // Concurrent downloads management
+  setMaxConcurrentDownloads: (count: number) => void;
+
   // Plugin management
   togglePlugin: (pluginId: string) => void;
   isPluginEnabled: (pluginId: string) => boolean;
@@ -87,6 +91,7 @@ export const createSettingsSlice: StateCreator<State, [], [], SettingsState> = (
   enabledPlugins: {},
   backupEnabled: true,
   maxBackupCount: 5,
+  maxConcurrentDownloads: 3,
   addSetting: (setting: LocalSetting) =>
     set((state) => ({
       settings: { ...state.settings, [setting.id]: setting },
@@ -214,6 +219,11 @@ export const createSettingsSlice: StateCreator<State, [], [], SettingsState> = (
   setMaxBackupCount: (count: number) =>
     set(() => ({
       maxBackupCount: count,
+    })),
+
+  setMaxConcurrentDownloads: (count: number) =>
+    set(() => ({
+      maxConcurrentDownloads: Math.min(10, Math.max(1, count)),
     })),
 
   // Plugin management

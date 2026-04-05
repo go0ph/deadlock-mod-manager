@@ -1,5 +1,6 @@
 import { TooltipProvider } from "@deadlock-mods/ui/components/tooltip";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { invoke } from "@tauri-apps/api/core";
 import { load } from "@tauri-apps/plugin-store";
 import usePromise from "react-promise-suspense";
 import { Outlet } from "react-router";
@@ -46,6 +47,16 @@ const App = () => {
     await usePersistedStore.persist.rehydrate();
     await initializeApiUrl();
     await downloadManager.init();
+
+    // Sync the persisted concurrency setting with the Rust download manager.
+    const { maxConcurrentDownloads } = usePersistedStore.getState();
+    await invoke("set_max_concurrent_downloads", {
+      maxConcurrent: maxConcurrentDownloads,
+    }).catch((err) => {
+      logger
+        .withError(err instanceof Error ? err : new Error(String(err)))
+        .warn("Failed to initialize max concurrent downloads");
+    });
 
     logger.debug(
       "Store rehydrated, API URL initialized, and download manager ready",

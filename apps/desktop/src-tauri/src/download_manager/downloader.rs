@@ -1,6 +1,7 @@
 use crate::errors::Error;
 use futures::StreamExt;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Instant;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -9,6 +10,21 @@ use tokio_util::sync::CancellationToken;
 #[allow(dead_code)]
 const BUFFER_SIZE: usize = 64 * 1024; // 64KB buffer for future use
 const PROGRESS_THROTTLE_MS: u128 = 500; // Emit progress every 500ms
+
+/// A shared reqwest client reused across all downloads.  Connection pooling and keep-alive
+/// are enabled by default in reqwest, so reusing the client avoids the per-download TLS
+/// handshake and TCP connection overhead.
+static SHARED_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn get_client() -> &'static reqwest::Client {
+  SHARED_CLIENT.get_or_init(|| {
+    reqwest::Client::builder()
+      .pool_max_idle_per_host(8)
+      .tcp_keepalive(std::time::Duration::from_secs(30))
+      .build()
+      .expect("Failed to build shared reqwest client")
+  })
+}
 
 #[derive(Clone, Debug)]
 pub struct DownloadProgress {
@@ -25,14 +41,21 @@ pub async fn download_file<F>(
 where
   F: Fn(DownloadProgress) + Send + 'static,
 {
-  log::info!("Starting download from {url} to {target_path:?}");
+  let host = url.split('/').nth(2).unwrap_or("unknown").to_string();
 
-  let client = reqwest::Client::new();
+  log::info!("Starting download from {url} (host: {host}) to {target_path:?}");
+
+  let client = get_client();
+  let request_start = Instant::now();
+
   let response = client
     .get(url)
     .send()
     .await
     .map_err(|e| Error::Network(format!("Failed to send request: {e}")))?;
+
+  let ttfb = request_start.elapsed();
+  log::debug!("Time to first byte from {host}: {:.0}ms", ttfb.as_millis());
 
   if !response.status().is_success() {
     return Err(Error::Network(format!(
@@ -42,7 +65,7 @@ where
   }
 
   let total_size = response.content_length().unwrap_or(0);
-  log::info!("Download size: {total_size} bytes");
+  log::info!("Download size from {host}: {total_size} bytes");
 
   if let Some(parent) = target_path.parent() {
     tokio::fs::create_dir_all(parent).await.map_err(Error::Io)?;
@@ -96,7 +119,19 @@ where
     .await
     .map_err(|e| Error::FileWriteFailed(format!("Failed to flush file: {e}")))?;
 
-  log::info!("Download completed: {target_path:?}");
+  let elapsed = start_time.elapsed();
+  let throughput_kbps = if elapsed.as_secs_f64() > 0.0 {
+    (downloaded as f64 / 1024.0) / elapsed.as_secs_f64()
+  } else {
+    0.0
+  };
+  log::info!(
+    "Download completed: {target_path:?} — host={host} bytes={downloaded} \
+     ttfb={ttfb_ms}ms time={elapsed_ms}ms throughput={throughput_kbps:.1}KB/s",
+    ttfb_ms = ttfb.as_millis(),
+    elapsed_ms = elapsed.as_millis(),
+  );
+
   Ok(())
 }
 
