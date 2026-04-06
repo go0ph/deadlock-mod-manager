@@ -55,6 +55,7 @@
   <ol>
     <li><a href="#screenshots">Screenshots</a></li>
     <li><a href="#usage">Usage</a></li>
+    <li><a href="#downloading-windows-builds">Downloading Windows Builds</a></li>
     <li><a href="#whats-inside">What's inside?</a></li>
     <li><a href="#development">Development</a></li>
     <li><a href="#translation--localization">Translation & Localization</a></li>
@@ -84,6 +85,42 @@ For help and support:
 > Linux support is provided on a **best-effort basis**. Due to a lack of contributors with Linux expertise and the maintainer's limited experience distributing software across the many Linux distributions, you may encounter packaging issues, missing dependencies, or platform-specific bugs. If you're a Linux user and want to help improve support, contributions are very welcome! Please reach out on [Discord](https://deadlockmods.app/discord) or open a PR.
 
 <br />
+
+## Downloading Windows Builds
+
+You can grab a ready-to-run Windows installer (`.exe`) without compiling anything locally in two ways:
+
+### Artifact from every push to `main`
+
+Every commit merged to `main` (and every same-repo pull request) triggers the **Build Windows Executable** workflow, which produces a downloadable artifact:
+
+1. Go to the [**Actions → Build Windows Executable**](https://github.com/go0ph/deadlock-mod-manager/actions/workflows/build-windows-exe.yml) page.
+2. Click the most recent successful run.
+3. Scroll to the **Artifacts** section at the bottom of the run page.
+4. Download **`deadlock-mod-manager-windows-x64`** — it contains the NSIS installer `.exe`.
+
+> Artifacts are kept for **30 days**. Download promptly if you need a specific build.
+
+### Release builds (versioned, code-signed)
+
+Versioned, code-signed releases are published automatically whenever a `v*.*.*` tag is pushed:
+
+```bash
+# Bump the version in apps/desktop/package.json first, then:
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+The signed installer and update packages are attached to the corresponding [GitHub Release](https://github.com/go0ph/deadlock-mod-manager/releases) and can be downloaded from the **Assets** section of that release.
+
+### Where the `.exe` lives
+
+| Build type | Location |
+|---|---|
+| CI artifact (every push to `main`) | Actions run → **Artifacts** → `deadlock-mod-manager-windows-x64` |
+| Versioned release | [Releases page](https://github.com/go0ph/deadlock-mod-manager/releases) → **Assets** |
+
+---
 
 ## Development
 
