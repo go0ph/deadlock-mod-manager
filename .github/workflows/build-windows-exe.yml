@@ -1,0 +1,76 @@
+name: Build Windows Executable
+
+env:
+  NODE_VERSION: "24.8.0"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-windows:
+    name: Build Windows Executable
+    # Skip on pull requests from forks — repo secrets are not available there.
+    if: >
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop -> apps/desktop/target
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Windows executable
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_API_URL: https://api.deadlockmods.app
+          VITE_WEB_URL: https://deadlockmods.app
+          VITE_AUTH_URL: https://auth.deadlockmods.app
+        with:
+          projectPath: ./apps/desktop
+          # tauri.ci.conf.json disables createUpdaterArtifacts so no signing
+          # key is required for CI builds.
+          args: "--bundles nsis --config tauri.ci.conf.json"
+
+      - name: Rename artifact to stable name
+        shell: bash
+        run: |
+          exe=$(find apps/desktop/target/release/bundle/nsis -name '*.exe' | head -1)
+          cp "$exe" deadlock-mod-manager-windows-x64.exe
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deadlock-mod-manager-windows-x64
+          path: deadlock-mod-manager-windows-x64.exe
+          if-no-files-found: error
+          retention-days: 30
